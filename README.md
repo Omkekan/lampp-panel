@@ -1,33 +1,125 @@
 # LAMPP Panel
 
-A small Tk control panel for a local web development stack on Fedora. It manages the
-distribution's own services through systemd - **no XAMPP required**:
+A small Tk-based control panel for managing a local web development stack. It manages the distribution's native services through **systemd** — no XAMPP required.
 
-| Row      | Fedora package(s)           | Unit              |
-|----------|-----------------------------|-------------------|
-| Apache   | `httpd`                     | `httpd.service`   |
-| MariaDB  | `mariadb-server`            | `mariadb.service` |
-| PHP-FPM  | `php-fpm`, `php-mysqlnd`    | `php-fpm.service` |
-| FTP      | `vsftpd`                    | `vsftpd.service`  |
-| Postfix  | `postfix`                   | `postfix.service` |
-| Tomcat   | `tomcat`                    | `tomcat.service`  |
+> **Note:** LAMPP Panel is not affiliated with Apache Friends or XAMPP.
 
-Start/stop/restart, enable at boot, install missing services, start/stop the whole LAMP
-stack, project launcher, log and config viewers, database backup (`mariadb-dump`).
-phpMyAdmin (`phpMyAdmin` package) is opened by the MariaDB row's Admin button.
+## Supported Distributions
 
-Not affiliated with Apache Friends or XAMPP.
+LAMPP Panel is tailored for the **Fedora / RHEL family** and works out of the box on:
 
-## Install (Fedora)
-    sudo dnf install lampp-panel        # pulls in httpd, mariadb-server, php-fpm, phpMyAdmin
-    lampp-panel
+* Fedora (Workstation, KDE, Silverblue/Kinoite)
+* Red Hat Enterprise Linux (RHEL)
+* AlmaLinux
+* Rocky Linux
+* CentOS Stream
+* Nobara Linux
 
-## Projects folder
-Apache serves `/var/www/html`, which is owned by root. Click **Grant Access** once to give
-your user read/write access through an ACL (no ownership change, SELinux labels stay intact).
+> **Note:** Adapting LAMPP Panel for Debian, Ubuntu, or Arch Linux requires modifying the source code to replace `dnf` with `apt`/`pacman` and mapping Fedora-specific service names such as `httpd` to their local equivalents such as `apache2`.
 
-## Security design
-- The GUI runs as a normal user and refuses to run as root.
-- Root actions go through `pkexec /usr/libexec/lampp-panel-helper`, which accepts only a
-  fixed whitelist of actions, services, packages and log files.
-- No shell strings are built from file names or user input.
+## Managed Services
+
+| Service     | Fedora Package(s)        | systemd Unit      |
+| ----------- | ------------------------ | ----------------- |
+| **Apache**  | `httpd`                  | `httpd.service`   |
+| **MariaDB** | `mariadb-server`         | `mariadb.service` |
+| **PHP-FPM** | `php-fpm`, `php-mysqlnd` | `php-fpm.service` |
+| **FTP**     | `vsftpd`                 | `vsftpd.service`  |
+| **Postfix** | `postfix`                | `postfix.service` |
+| **Tomcat**  | `tomcat`                 | `tomcat.service`  |
+
+## Features
+
+* Start, stop, and restart individual services.
+* Enable or disable services at boot.
+* Install missing services and dependencies.
+* Start or stop the entire LAMP stack.
+* Launch projects from the control panel.
+* View service logs.
+* View service configuration files.
+* Create database backups using `mariadb-dump`.
+* Open **phpMyAdmin** using the **Admin** button in the MariaDB row.
+* Grant user access to the Apache projects directory without changing ownership or SELinux labels.
+
+## Installation
+
+### Fedora / RHEL
+
+Install the package using:
+
+```bash
+sudo dnf install lampp-panel
+```
+
+This installs the required components, including:
+
+* `httpd`
+* `mariadb-server`
+* `php-fpm`
+* `phpMyAdmin`
+
+Then launch the application:
+
+```bash
+lampp-panel
+```
+
+## Projects Folder
+
+Apache serves projects from:
+
+```text
+/var/www/html
+```
+
+By default, this directory is owned by `root`.
+
+Click **Grant Access** once in LAMPP Panel to give your user read/write access through an **ACL**.
+
+This approach:
+
+* Does not change directory ownership.
+* Preserves the existing permissions structure.
+* Keeps SELinux labels intact.
+* Allows you to work with projects without running the GUI as root.
+
+## Security Design
+
+LAMPP Panel is designed to keep the graphical application running with normal user privileges.
+
+### Normal User Execution
+
+The GUI:
+
+* Runs as a regular user.
+* Refuses to run as `root`.
+* Does not require the entire application to run with elevated privileges.
+
+### Privileged Operations
+
+Operations requiring administrator privileges are delegated through:
+
+```text
+pkexec /usr/libexec/lampp-panel-helper
+```
+
+The helper accepts only a fixed whitelist of:
+
+* Actions
+* Services
+* Packages
+* Log files
+
+### Input Handling
+
+No shell command strings are constructed from filenames or arbitrary user input.
+
+This limits the privileged helper to a controlled set of predefined operations and reduces the risk associated with executing commands with elevated privileges.
+
+## License
+
+Add your project's license information here.
+
+## Disclaimer
+
+LAMPP Panel is an independent project and is **not affiliated with, endorsed by, or sponsored by Apache Friends or XAMPP**.
