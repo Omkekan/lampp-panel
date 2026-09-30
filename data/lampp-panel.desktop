@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LAMPP Panel
+Comment=Control panel for a local Apache, MariaDB and PHP stack
+Exec=lampp-panel
+Icon=lampp-panel
+Terminal=false
+Categories=Development;WebDevelopment;
+Keywords=lamp;apache;httpd;mariadb;mysql;php;

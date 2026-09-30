@@ -1,0 +1,237 @@
+#!/usr/bin/python3
+"""Privileged helper for LAMPP Panel.
+
+Runs as root through pkexec. It never accepts commands, paths or arbitrary
+strings from the caller - only a fixed set of actions on a fixed set of
+services, packages and log files, so a compromised GUI cannot use it to run
+arbitrary code as root.
+
+Usage:
+    start|stop|restart <service> [--free-ports]   (--free-ports: start only)
+    enable|disable|install <service>
+    start-stack | stop-stack                      (MariaDB + PHP-FPM + Apache)
+    read-log <log-id>
+    clear-logs
+    grant-access                                  (ACL on /var/www/html for the calling user)
+"""
+import os
+import pwd
+import stat
+import subprocess
+import sys
+
+SAFE_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+HTDOCS = "/var/www/html"
+
+SERVICES = {
+    "apache":  {"unit": "httpd.service",    "ports": (80, 443), "pkgs": ("httpd",)},
+    "mariadb": {"unit": "mariadb.service",  "ports": (3306,),   "pkgs": ("mariadb-server",)},
+    "php-fpm": {"unit": "php-fpm.service",  "ports": (),        "pkgs": ("php-fpm", "php-mysqlnd")},
+    "ftp":     {"unit": "vsftpd.service",   "ports": (21,),     "pkgs": ("vsftpd",)},
+    "postfix": {"unit": "postfix.service",  "ports": (25,),     "pkgs": ("postfix",)},
+    "tomcat":  {"unit": "tomcat.service",   "ports": (8080,),   "pkgs": ("tomcat",)},
+}
+STACK = ("mariadb", "php-fpm", "apache")      # start order; stop uses the reverse
+
+LOGS = {
+    "apache-error":  "/var/log/httpd/error_log",
+    "apache-access": "/var/log/httpd/access_log",
+    "mariadb":       "/var/log/mariadb/mariadb.log",
+}
+
+
+def die(msg, code=2):
+    print(f"lampp-panel-helper: {msg}", file=sys.stderr, flush=True)
+    sys.exit(code)
+
+
+def say(msg):
+    print(msg, flush=True)      # flush: keeps our lines in order with the child's output
+
+
+def run(cmd, timeout=90):
+    try:
+        return subprocess.run(cmd, env=SAFE_ENV, stdin=subprocess.DEVNULL,
+                              timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        die(f"{cmd[0]} timed out after {timeout} s", 4)
+    except OSError as exc:
+        die(f"cannot run {cmd[0]}: {exc}", 5)
+
+
+def open_nofollow(path, flags):
+    """open() that refuses symlinks in *every* path component, so a directory swapped
+    for a symlink cannot redirect a root-owned read or truncate somewhere else."""
+    parts = [p for p in path.split("/") if p]
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+        return os.open(parts[-1], flags | os.O_NOFOLLOW, dir_fd=fd)
+    finally:
+        os.close(fd)
+
+
+def unit_installed(unit):
+    out = subprocess.run(["systemctl", "show", "-p", "LoadState", "--value", unit],
+                         env=SAFE_ENV, capture_output=True, text=True, timeout=10).stdout
+    return out.strip() != "not-found"
+
+
+def unit_pids(unit):
+    """MainPID + children of a unit, so we never kill the service we are about to start."""
+    try:
+        import psutil
+        out = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", unit],
+                             env=SAFE_ENV, capture_output=True, text=True, timeout=10).stdout.strip()
+        if not (out.isdigit() and int(out) > 0):
+            return set()
+        main = psutil.Process(int(out))
+        return {main.pid} | {c.pid for c in main.children(recursive=True)}
+    except Exception:
+        return set()
+
+
+def free_ports(ports, own_unit):
+    """SIGTERM whatever else is listening on the service's ports, SIGKILL after 5 s."""
+    if not ports:
+        return
+    try:
+        import psutil
+    except ImportError:
+        die("python3-psutil is required for --free-ports", 6)
+
+    skip = {os.getpid()} | unit_pids(own_unit)
+    pids = set()
+    for conn in psutil.net_connections(kind="inet"):
+        if (conn.status == psutil.CONN_LISTEN and conn.laddr
+                and conn.laddr.port in ports and conn.pid):
+            if conn.pid == 1:
+                say(f"Port {conn.laddr.port} is held by systemd (socket activation); "
+                    "stop the matching .socket unit instead.")
+            elif conn.pid not in skip:
+                pids.add(conn.pid)
+
+    procs = []
+    for pid in sorted(pids):
+        try:
+            proc = psutil.Process(pid)
+            say(f"Stopping {proc.name()} (PID {pid})")
+            proc.terminate()
+            procs.append(proc)
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(procs, timeout=5)
+    for proc in alive:
+        try:
+            say(f"Force-killing PID {proc.pid} (did not exit after SIGTERM)")
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+
+
+def stack(action):
+    order = STACK if action == "start" else tuple(reversed(STACK))
+    failed = 0
+    for sid in order:
+        unit = SERVICES[sid]["unit"]
+        if not unit_installed(unit):
+            say(f"{unit}: not installed, skipping")
+            continue
+        say(f"{action} {unit}")
+        if run(["systemctl", action, unit]) != 0:
+            failed = 1
+    return failed
+
+
+def read_log(log_id):
+    path = LOGS.get(log_id)
+    if path is None:
+        die(f"unknown log: {log_id!r}")
+    try:
+        fd = open_nofollow(path, os.O_RDONLY | os.O_NONBLOCK)
+    except FileNotFoundError:
+        say(f"(file not found: {path})")
+        return 0
+    except OSError as exc:
+        die(f"cannot open {path}: {exc}", 3)
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            die("not a regular file", 3)
+        f.seek(max(0, os.fstat(f.fileno()).st_size - 131072))
+        data = f.read(131072)
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+    return 0
+
+
+def clear_logs():
+    for path in LOGS.values():
+        try:
+            fd = open_nofollow(path, os.O_WRONLY | os.O_NONBLOCK)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            say(f"skipped {path}: {exc}")
+            continue
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.ftruncate(fd, 0)
+                say(f"cleared {path}")
+        finally:
+            os.close(fd)
+    return 0
+
+
+def grant_access():
+    """Give the user who ran pkexec rwx on /var/www/html (ACL, incl. default ACL for new files)."""
+    try:
+        uid = int(os.environ.get("PKEXEC_UID", ""))
+        name = pwd.getpwuid(uid).pw_name
+    except (ValueError, KeyError):
+        die("cannot determine the calling user (run through pkexec)", 3)
+    if uid < 1000:
+        die("refusing to grant access to a system account", 3)
+    if os.path.islink(HTDOCS) or not os.path.isdir(HTDOCS):
+        die(f"{HTDOCS} does not exist (is httpd installed?) or is a symlink", 3)
+    rc = run(["setfacl", "-R", "-m", f"u:{uid}:rwX,d:u:{uid}:rwX", HTDOCS])
+    if rc == 0:
+        say(f"{name} can now create and edit files in {HTDOCS}")
+    return rc
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        die("must be run as root (through pkexec)", 1)
+    args = argv[1:]
+
+    one = {"clear-logs": clear_logs, "grant-access": grant_access,
+           "start-stack": lambda: stack("start"), "stop-stack": lambda: stack("stop")}
+    if len(args) == 1 and args[0] in one:
+        return one[args[0]]()
+
+    if len(args) == 2 and args[0] == "read-log":
+        return read_log(args[1])
+
+    if len(args) in (2, 3) and args[0] in ("start", "stop", "restart", "enable", "disable", "install"):
+        action, sid, flags = args[0], args[1], args[2:]
+        svc = SERVICES.get(sid)
+        if svc is None:
+            die(f"unknown service: {sid!r}")
+        if flags and not (action == "start" and flags == ["--free-ports"]):
+            die("invalid arguments")
+        if action == "install":
+            return run(["dnf", "install", "-y", *svc["pkgs"]], timeout=1800)
+        if flags:
+            free_ports(svc["ports"], svc["unit"])
+        return run(["systemctl", action, svc["unit"]])
+
+    die("usage: lampp-panel-helper start|stop|restart|enable|disable|install <service> | "
+        "start-stack | stop-stack | read-log <id> | clear-logs | grant-access")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

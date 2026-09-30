@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.YOURNAME.LamppPanel</id>
+  <name>LAMPP Panel</name>
+  <summary>Control panel for a local Apache, MariaDB and PHP stack</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Start, stop, restart and monitor a local web development stack on Fedora: Apache, MariaDB, PHP-FPM, vsftpd, Postfix and Tomcat. Missing services can be installed from the panel. Includes a project launcher, log and config viewers, and database backup. Privileged actions go through polkit.</p>
+    <p>Uses the distribution's own packages and systemd units. XAMPP is not required, and this project is not affiliated with Apache Friends or XAMPP.</p>
+  </description>
+  <launchable type="desktop-id">lampp-panel.desktop</launchable>
+  <url type="homepage">https://github.com/YOURNAME/lampp-panel</url>
+  <provides><binary>lampp-panel</binary></provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="2.0.0" date="2026-09-30"/>
+  </releases>
+</component>

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lampp-panel"
+version = "2.0.0"
+description = "Control panel for a local Apache, MariaDB and PHP development stack"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["psutil>=5.9"]
+
+[project.gui-scripts]
+lampp-panel = "lamppanel.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
